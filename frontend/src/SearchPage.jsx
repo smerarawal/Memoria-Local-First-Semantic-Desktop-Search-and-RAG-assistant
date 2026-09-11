@@ -21,11 +21,11 @@ export default function SearchPage({ addToast }) {
   const [activeFilter, setActiveFilter] = useState('')
 
   const FILTERS = [
-    { label: 'All', value: '' },
-    { label: '📄 PDF', value: '.pdf' },
-    { label: '📝 DOCX', value: '.docx' },
-    { label: '🔤 TXT', value: '.txt' },
-    { label: '📋 Markdown', value: '.md' },
+    { label: 'All',      value: '' },
+    { label: 'PDF',      value: '.pdf' },
+    { label: 'DOCX',     value: '.docx' },
+    { label: 'TXT',      value: '.txt' },
+    { label: 'Markdown', value: '.md' },
   ]
 
   async function doSearch(q = query, ext = activeFilter) {
@@ -63,9 +63,9 @@ export default function SearchPage({ addToast }) {
   return (
     <div>
       <div className="search-hero">
-        <div className="search-hero-tag"><span className="star-icon">✦</span>Local · Private · Semantic</div>
+        <div className="search-hero-tag"><span className="star-icon">&middot;</span> Local &middot; Private &middot; Semantic</div>
         <h1>Find what you<br/><em>remember</em></h1>
-        <p>Describe it the way you recall it — Memoria searches by meaning, not filename</p>
+        <p>Describe it the way you recall it &mdash; Memoria searches by meaning, not filename</p>
       </div>
 
       <div className="search-box">
@@ -113,8 +113,13 @@ export default function SearchPage({ addToast }) {
 
           {results.results.length === 0 ? (
             <div className="empty-state">
+              <div className="empty-dots">
+                {[4,7,5,9,4,6,3].map((s,i) => (
+                  <div key={i} className="empty-dot" style={{width:s,height:s}} />
+                ))}
+              </div>
               <p className="empty-label">Nothing matched</p>
-              <p style={{ fontSize: '0.85rem' }}>Try rephrasing, or check that your folders are indexed in Settings.</p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', marginTop: '0.4rem' }}>Try rephrasing, or add folders in Settings.</p>
             </div>
           ) : (
             results.results.map(r => {
@@ -160,9 +165,41 @@ export default function SearchPage({ addToast }) {
       )}
 
       {!results && !loading && (
-        <div className="empty-state">
-          <p className="empty-label">Start searching</p>
-          <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Type a thought, topic, or phrase — not a filename</p>
+        <div className="landing-state">
+          <div className="capability-row">
+            <div className="capability-item">
+              <span className="capability-num">PDF · DOCX · TXT · MD</span>
+              <span className="capability-label">Supported formats</span>
+            </div>
+            <div className="capability-divider" />
+            <div className="capability-item">
+              <span className="capability-num">Semantic</span>
+              <span className="capability-label">Search by meaning</span>
+            </div>
+            <div className="capability-divider" />
+            <div className="capability-item">
+              <span className="capability-num">Local only</span>
+              <span className="capability-label">Nothing leaves your device</span>
+            </div>
+          </div>
+
+          <div className="example-queries">
+            <span className="example-label">Try</span>
+            {[
+              'machine learning notes',
+              'invoice from last month',
+              'project proposal',
+              'resume draft',
+            ].map(q => (
+              <button
+                key={q}
+                className="example-chip"
+                onClick={() => { setQuery(q); doSearch(q) }}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

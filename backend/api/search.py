@@ -56,8 +56,20 @@ def semantic_search(
 
     # Filter out results below a minimum relevance threshold so
     # unrelated files don't pollute results when nothing truly matches.
-    MIN_SCORE = 0.20
+    MIN_SCORE = 0.10
     deduped = [r for r in deduped if r.score >= MIN_SCORE]
+
+    # Boost results whose filename contains query words — filename is a
+    # strong signal that is invisible to pure semantic search.
+    query_words = set(q.lower().replace('.', ' ').split())
+    for r in deduped:
+        stem = r.filename.lower().replace('_', ' ').replace('-', ' ').replace('.', ' ')
+        if any(w in stem for w in query_words if len(w) > 1):
+            r.score = min(1.0, r.score + 0.30)
+            r.relevance_pct = min(100, round(r.score * 100))
+
+    # Re-sort after boost
+    deduped.sort(key=lambda r: r.score, reverse=True)
 
     return SearchResponse(
         query=q,
