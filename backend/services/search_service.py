@@ -3,22 +3,21 @@ Search service — converts a natural language query into ranked file results.
 
 Pipeline:
   Query string
-    ↓ embedding_service.embed_one()   → query vector (384-dim)
-    ↓ faiss_index.search(k=20)        → [(chunk_id, cosine_score)]
-    ↓ ChunkRepository.get_many()      → chunk rows with file_id, page, text
-    ↓ FileRepository.get()            → file metadata (filename, path, ext)
-    ↓ aggregate by file               → max score per file, collect pages
-    ↓ rank descending by score        → final result list
+    down embedding_service.embed_one()   -> query vector (384-dim)
+    down faiss_index.search(k=80)        -> [(chunk_id, cosine_score)]
+    down keyword boost per chunk         -> score += 0.22 per matching query word
+    down ChunkRepository.get_many()      -> chunk rows with file_id, page, text
+    down FileRepository.get()            -> file metadata (filename, path, ext)
+    down aggregate by file               -> max score per file, collect pages
+    down rank descending by score        -> final result list
 
-Aggregation rationale:
-  A PDF has 200 chunks. 15 of them match the query. Showing 15 separate
-  results all from the same file is noisy and unhelpful. We take the best
-  score across all matching chunks and surface the file once, with the top
-  matching page number shown as the citation. This matches what real
-  search products do — show the document, not the fragment.
-
-  The top_chunk_text is kept in the result so the UI can show a snippet
-  of the most relevant passage — like Google's "featured snippet" idea.
+Keyword boosting rationale:
+  Semantic embeddings from small models (all-MiniLM-L6-v2) are good at
+  conceptual similarity but underweight technical proper nouns like "Shapley",
+  "FAISS", "BERT", specific names, acronyms, etc. A literal substring match
+  in a chunk is a very strong relevance signal that should dominate over a
+  loose semantic match in an unrelated document. We apply a per-term additive
+  boost directly to FAISS scores before aggregation.
 """
 
 import logging
@@ -44,13 +43,31 @@ class SearchResult:
     matched_pages: list[int]  # All pages that had matching chunks
 
 
+def _keyword_boost(text: str, terms: list[str]) -> float:
+    """
+    Return an additive score boost based on how many query terms
+    appear literally in the chunk text (case-insensitive).
+
+    Each matching term adds 0.22, capped at 0.55 total.
+    This ensures a file that literally mentions "shapley" will always
+    rank above one that merely talks about related topics.
+    """
+    if not terms:
+        return 0.0
+    text_lower = text.lower()
+    matches = sum(1 for t in terms if t in text_lower)
+    if matches == 0:
+        return 0.0
+    return min(0.55, 0.22 * matches)
+
+
 def search(
     query: str,
     top_k: int = 10,
     extension_filter: str | None = None,
 ) -> list[SearchResult]:
     """
-    Semantic search over the indexed corpus.
+    Semantic search over the indexed corpus, with keyword match boosting.
 
     Args:
         query:            Natural language query string.
@@ -71,10 +88,12 @@ def search(
     # 1. Embed query
     query_vector = embedding_service.embed_one(query.strip())
 
-    # 2. Retrieve top candidates from FAISS
-    #    We ask for more chunks than files we want (×5) because multiple
-    #    chunks may come from the same file and we aggregate them.
-    raw_results = faiss_index.search(query_vector, k=min(top_k * 5, 50))
+    # Precompute query terms for keyword boosting (skip very short words)
+    query_terms = [w.lower() for w in query.strip().split() if len(w) > 2]
+
+    # 2. Retrieve top candidates from FAISS — fetch more (x8) so keyword
+    #    boosting has enough candidates across all files to work with.
+    raw_results = faiss_index.search(query_vector, k=min(top_k * 8, 80))
 
     if not raw_results:
         return []
@@ -89,6 +108,18 @@ def search(
 
         chunks = chunk_repo.get_many(chunk_ids)
 
+        # 3a. Apply keyword boost to each chunk score immediately
+        boosted_score_map: dict[int, float] = {}
+        for chunk in chunks:
+            base = score_map.get(chunk["chunk_id"], 0.0)
+            boost = _keyword_boost(chunk["text"], query_terms)
+            boosted_score_map[chunk["chunk_id"]] = base + boost
+            if boost > 0:
+                logger.debug(
+                    "[search] keyword boost +%.2f on chunk %d (%s)",
+                    boost, chunk["chunk_id"], chunk["text"][:60]
+                )
+
         # Group by file_id
         file_chunks: dict[int, list] = {}
         for chunk in chunks:
@@ -97,7 +128,7 @@ def search(
                 file_chunks[fid] = []
             file_chunks[fid].append(chunk)
 
-        # 4. Aggregate per file
+        # 4. Aggregate per file — pick best chunk by BOOSTED score
         results: list[SearchResult] = []
         for fid, file_chunk_list in file_chunks.items():
             file_row = file_repo.get(fid)
@@ -110,12 +141,11 @@ def search(
             if extension_filter and file_row["extension"] != extension_filter:
                 continue
 
-            # Find best chunk by score
             best_chunk = max(
                 file_chunk_list,
-                key=lambda c: score_map.get(c["chunk_id"], 0.0)
+                key=lambda c: boosted_score_map.get(c["chunk_id"], 0.0)
             )
-            best_score = score_map.get(best_chunk["chunk_id"], 0.0)
+            best_score = boosted_score_map.get(best_chunk["chunk_id"], 0.0)
             matched_pages = sorted({c["page_number"] for c in file_chunk_list})
 
             results.append(SearchResult(
@@ -125,10 +155,10 @@ def search(
                 extension=file_row["extension"],
                 score=round(best_score, 4),
                 top_page=best_chunk["page_number"],
-                top_chunk_text=best_chunk["text"][:300],  # Snippet for UI
+                top_chunk_text=best_chunk["text"][:300],
                 matched_pages=matched_pages,
             ))
 
-    # 5. Sort by score descending, take top_k
+    # 5. Sort by boosted score descending, take top_k
     results.sort(key=lambda r: r.score, reverse=True)
     return results[:top_k]

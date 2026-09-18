@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.env
+
+# Data & DB
+*.db
+*.sqlite3
+*.faiss
+data/*.db
+data/*.faiss
+backend/*.db
+
+# Node / Frontend
+node_modules/
+dist/
+.ds_store

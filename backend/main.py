@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import threading
 from contextlib import asynccontextmanager
 
-from api import files, folders, health, indexing, search
+from api import files, folders, health, indexing, search, rag
 from config.settings import API_TITLE, API_VERSION
 from db.database import init_db
 from services.document_service import start_background_worker, stop_background_worker
@@ -63,3 +63,4 @@ app.include_router(folders.router)
 app.include_router(files.router)
 app.include_router(indexing.router)
 app.include_router(search.router)
+app.include_router(rag.router)

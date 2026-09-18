@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import SearchPage from './SearchPage'
 import SettingsPage from './SettingsPage'
+import LoginPage from './LoginPage'
 import './index.css'
 
 const API = 'http://localhost:8000'
@@ -152,11 +153,13 @@ function Toast({ toasts }) {
 }
 
 export default function App() {
+  const [user, setUser] = useState(() => localStorage.getItem('memoria_user'))
   const [page, setPage] = useState('search')
   const [toasts, setToasts] = useState([])
   const [watcherRunning, setWatcherRunning] = useState(null)
   const [indexedCount, setIndexedCount] = useState(null)
 
+  // All hooks must run unconditionally — before any early returns
   const pollStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API}/index/status`)
@@ -169,10 +172,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!user) return          // only poll when logged in
     pollStatus()
     const id = setInterval(pollStatus, 5000)
     return () => clearInterval(id)
-  }, [pollStatus])
+  }, [pollStatus, user])       // re-run when user logs in
 
   function addToast(msg, type = 'info') {
     const id = Date.now()
@@ -180,10 +184,13 @@ export default function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
+  // Show login page if not authenticated
+  if (!user) {
+    return <LoginPage onLogin={u => setUser(u)} />
+  }
+
   return (
     <div className="app-shell">
-      <VignetteOverlay />
-      <CornerSmoke />
       <CornerGeo />
 
       <nav className="navbar">
@@ -216,9 +223,25 @@ export default function App() {
       </nav>
 
       <main className="main-content">
-        {page === 'search' && <SearchPage addToast={addToast} />}
-        {page === 'settings' && <SettingsPage addToast={addToast} />}
+        {page === 'search' && <SearchPage addToast={addToast} user={user} />}
+        {page === 'settings' && <SettingsPage addToast={addToast} user={user} />}
       </main>
+
+      {/* Bottom right user menu */}
+      <div className="bottom-right-menu">
+        <button className="icon-menu-btn" onClick={() => setPage('settings')} title="Profile">
+          <img src="/profile.png" alt="profile" className="menu-icon" />
+          <span>Profile</span>
+        </button>
+        <button
+          className="icon-menu-btn"
+          onClick={() => { localStorage.removeItem('memoria_user'); setUser(null) }}
+          title="Logout"
+        >
+          <img src="/vortex.png" alt="logout" className="menu-icon vortex-spin" />
+          <span>Logout</span>
+        </button>
+      </div>
 
       <Toast toasts={toasts} />
     </div>
