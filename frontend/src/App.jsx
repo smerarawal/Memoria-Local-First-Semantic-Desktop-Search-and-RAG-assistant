@@ -190,7 +190,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${page === 'settings' ? 'is-settings' : ''}`}>
       <CornerGeo />
 
       <nav className="navbar">
@@ -222,7 +222,7 @@ export default function App() {
         </div>
       </nav>
 
-      <main className="main-content">
+      <main className={`main-content ${page === 'settings' ? 'is-settings' : ''}`}>
         {page === 'search' && <SearchPage addToast={addToast} user={user} />}
         {page === 'settings' && <SettingsPage addToast={addToast} user={user} />}
       </main>

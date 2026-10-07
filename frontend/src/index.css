@@ -56,6 +56,7 @@ body::after {
   position: fixed;
   inset: 0;
   z-index: -1;
+  transition: opacity 0.3s ease;
   background:
     /* Fade to solid dark from 55% onward */
     linear-gradient(90deg,
@@ -790,39 +791,59 @@ body::before {
 .text-input:focus { border-bottom-color: rgba(255,255,255,0.4); }
 .text-input::placeholder { color: rgba(255,255,255,0.25); }
 
+/* ─── Settings page layout overrides ──────────────────────── */
+.app-shell.is-settings {
+  background: #060812;
+}
+
+body:has(.is-settings)::after {
+  opacity: 0 !important;
+}
+
+.main-content.is-settings {
+  margin-left: 0;
+  max-width: 760px;
+  padding: 2.5rem 4rem 3rem 8vw;
+}
+
 /* ─── Settings two-column shell ─────────────────────────── */
 .settings-shell {
   display: flex;
-  min-height: calc(100vh - 56px);
-  background: #000000;
+  min-height: calc(100vh - 100px);
 }
 
 .settings-content {
   flex: 1;
   min-width: 0;
-  background: #000000;
 }
 
 /* Natural page title — flows from top of content area */
 .settings-page-title {
-  padding: 1.5rem 0 2rem;
+  padding: 0.5rem 0 2rem;
 }
 
-/* Right image panel — fixed strip */
+/* Right image panel — fixed strip, bleeding naturally */
 .settings-image-panel {
   position: fixed;
   right: 0;
   top: 56px;
-  width: 32vw;
-  max-width: 380px;
+  width: 38vw;
+  max-width: 520px;
   bottom: 0;
   background:
     linear-gradient(90deg,
-      #000000 0%,
-      rgba(0,0,0,0.6) 20%,
-      transparent 60%
+      #060812 0%,
+      rgba(6,8,18,0.95) 12%,
+      rgba(6,8,18,0.6) 32%,
+      transparent 65%
     ),
-    url('/space.jpg') center / cover no-repeat;
+    linear-gradient(180deg,
+      rgba(6,8,18,0.8) 0%,
+      transparent 10%,
+      transparent 90%,
+      rgba(6,8,18,0.8) 100%
+    ),
+    url('/space.jpg') center right / cover no-repeat;
   pointer-events: none;
   z-index: 10;
 }
