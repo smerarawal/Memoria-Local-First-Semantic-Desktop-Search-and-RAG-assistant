@@ -1,121 +1,133 @@
 import { useState } from 'react'
+import { GoogleLogin } from '@react-oauth/google'
+
+// Decode the JWT payload Google returns (no library needed — it's just base64)
+function decodeJwt(token) {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(base64))
+  } catch {
+    return {}
+  }
+}
 
 export default function LoginPage({ onLogin }) {
-  const [mode, setMode] = useState('signin') // 'signin' or 'create'
-  const [name, setName] = useState(() => localStorage.getItem('memoria_name') || '')
+  const [showForm, setShowForm] = useState(false)
+  const [name, setName]         = useState(() => localStorage.getItem('memoria_name') || '')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [error, setError]       = useState('')
+  const [loading, setLoading]   = useState(false)
 
-  function handleSubmit(e) {
+  // ── Google OAuth success ──────────────────────────────────────────
+  function onGoogleSuccess(response) {
+    const payload = decodeJwt(response.credential)
+    const displayName = payload.name || payload.email || 'User'
+    const email       = payload.email || 'google-user'
+    localStorage.setItem('memoria_user', email)
+    localStorage.setItem('memoria_name', displayName)
+    localStorage.setItem('memoria_avatar', payload.picture || '')
+    onLogin(email, displayName)
+  }
+
+  function onGoogleError() {
+    setError('Google sign-in failed. Make sure you have set VITE_GOOGLE_CLIENT_ID.')
+  }
+
+  // ── Manual form submit ────────────────────────────────────────────
+  function submit(e) {
     e.preventDefault()
     setError('')
-    if (!name.trim()) { setError('Please enter your name.'); return }
-    if (!username.trim()) { setError('Please enter your username/email.'); return }
+    if (!name.trim())     { setError('Please enter your name.'); return }
+    if (!username.trim()) { setError('Please enter your username.'); return }
     if (!password.trim()) { setError('Please enter a password.'); return }
-    
     setLoading(true)
     setTimeout(() => {
       localStorage.setItem('memoria_user', username.trim())
       localStorage.setItem('memoria_name', name.trim())
       setLoading(false)
       onLogin(username.trim(), name.trim())
-    }, 500)
+    }, 400)
   }
 
   return (
-    <div className="login-shell">
+    <div className="lp-shell">
+      <div className="lp-card">
 
-      {/* Left — ocean image side */}
-      <div className="login-left" aria-hidden="true">
-        <div className="login-img-text">
-          <p className="login-img-quote">Every file<br/>holds a memory.</p>
-          <span className="login-img-line" />
+        {/* ── Left — tree-moon illustration ── */}
+        <div className="lp-left" aria-hidden="true">
+          <div className="lp-left-overlay">
+            <p className="lp-tagline">every file<br />holds a memory.</p>
+            <span className="lp-brand">memoria_</span>
+          </div>
         </div>
-      </div>
 
-      {/* Right — form side */}
-      <div className="login-right">
-        <div className="login-inner">
+        {/* ── Right — auth form ── */}
+        <div className="lp-right">
+        <div className="lp-form-wrap">
 
-          <div className="login-logo-block">
-            <span className="login-logo">Memoria</span>
+          <div className="lp-header">
+            <h1 className="lp-title">memoria_</h1>
+            <p className="lp-sub">Your local AI memory. Private by design.</p>
           </div>
 
-          {/* Mode toggler */}
-          <div className="login-mode-toggle">
-            <button 
-              type="button"
-              className={`login-mode-btn ${mode === 'signin' ? 'active' : ''}`}
-              onClick={() => setMode('signin')}
-            >
-              Sign In
-            </button>
-            <button 
-              type="button"
-              className={`login-mode-btn ${mode === 'create' ? 'active' : ''}`}
-              onClick={() => setMode('create')}
-            >
-              Create Account
-            </button>
+          {/* Google sign-in — primary CTA */}
+          <div className="lp-google-wrap">
+            <GoogleLogin
+              onSuccess={onGoogleSuccess}
+              onError={onGoogleError}
+              theme="outline"
+              size="large"
+              text="signin_with"
+              shape="rectangular"
+              width="100%"
+            />
           </div>
 
-          <form className="login-form" onSubmit={handleSubmit} noValidate>
-            <div className="login-field">
-              <label className="login-label" htmlFor="login-name">Your Name</label>
-              <input
-                id="login-name"
-                className="login-input"
-                type="text"
-                placeholder="e.g. Smera Rawal"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                autoFocus
-              />
-            </div>
+          {/* Divider */}
+          <div className="lp-divider">
+            <span className="lp-divider-line" />
+            <span className="lp-divider-text">or continue manually</span>
+            <span className="lp-divider-line" />
+          </div>
 
-            <div className="login-field">
-              <label className="login-label" htmlFor="login-username">Username or Email</label>
-              <input
-                id="login-username"
-                className="login-input"
-                type="text"
-                autoComplete="username"
-                placeholder="username@domain.com"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-              />
-            </div>
-
-            <div className="login-field">
-              <label className="login-label" htmlFor="login-password">Password</label>
-              <input
-                id="login-password"
-                className="login-input"
-                type="password"
-                autoComplete="current-password"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-            </div>
-
-            {error && <p className="login-error">{error}</p>}
-
-            <button
-              className="login-btn"
-              type="submit"
-              disabled={loading}
-              id="login-submit"
-            >
-              {loading ? 'Processing…' : (mode === 'signin' ? 'Enter' : 'Create')}
+          {/* Manual form — collapsed by default */}
+          {!showForm ? (
+            <button className="lp-show-form-btn" onClick={() => setShowForm(true)}>
+              Use username &amp; password ↓
             </button>
-          </form>
+          ) : (
+            <form onSubmit={submit} noValidate>
+              <label className="lp-label">Name
+                <input className="lp-input" type="text" placeholder="Your name"
+                  value={name} onChange={e => setName(e.target.value)} autoFocus />
+              </label>
+              <label className="lp-label">Username or email
+                <input className="lp-input" type="text" placeholder="username@domain.com"
+                  autoComplete="username"
+                  value={username} onChange={e => setUsername(e.target.value)} />
+              </label>
+              <label className="lp-label">Password
+                <input className="lp-input" type="password" placeholder="••••••••"
+                  autoComplete="current-password"
+                  value={password} onChange={e => setPassword(e.target.value)} />
+              </label>
+              {error && <p className="lp-error">{error}</p>}
+              <button className="lp-btn" type="submit" disabled={loading}>
+                {loading ? 'One moment…' : 'Enter →'}
+              </button>
+            </form>
+          )}
+
+          {error && !showForm && <p className="lp-error">{error}</p>}
+
+          <p className="lp-privacy">
+            🔒 All your files stay on this machine. Memoria never uploads your documents.
+          </p>
 
         </div>
       </div>
-
     </div>
-  )
+  </div>
+)
 }

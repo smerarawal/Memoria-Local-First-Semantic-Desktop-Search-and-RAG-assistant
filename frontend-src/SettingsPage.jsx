@@ -1,209 +1,74 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useApi } from '../useApi'
+import { useApi } from './useApi'
+import Px from './Px'
 
 export default function SettingsPage({ addToast }) {
   const { get, post, del } = useApi()
   const [folders, setFolders] = useState([])
-  const [status, setStatus] = useState(null)
-  const [newPath, setNewPath] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [indexing, setIndexing] = useState(false)
+  const [st, setSt] = useState(null)
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  const loadFolders = useCallback(async () => {
+  const load = useCallback(async () => {
     try { setFolders(await get('/folders')) } catch {}
+    try { setSt(await get('/index/status')) } catch { setSt(null) }
   }, [get])
+  useEffect(() => { load(); const id = setInterval(load, 4000); return () => clearInterval(id) }, [load])
 
-  const loadStatus = useCallback(async () => {
-    try { setStatus(await get('/index/status')) } catch {}
-  }, [get])
+  const act = async (fn, ok) => { try { await fn(); ok && addToast(ok); load() } catch (e) { addToast(e.message) } }
+  const add = async () => { if (!path.trim()) return; setBusy(true); await act(async () => { await post('/folders', { path: path.trim() }); setPath('') }, 'Folder added'); setBusy(false) }
+  // NOTE: the old UI called POST /index/trigger, which does not exist. The real route is POST /index.
+  const indexNow = () => act(async () => { await post('/index'); }, 'Indexing started')
 
-  useEffect(() => {
-    loadFolders()
-    loadStatus()
-    const id = setInterval(() => { loadFolders(); loadStatus() }, 4000)
-    return () => clearInterval(id)
-  }, [loadFolders, loadStatus])
-
-  async function addFolder() {
-    if (!newPath.trim()) return
-    setAdding(true)
-    try {
-      const res = await post('/folders', { path: newPath.trim() })
-      addToast(`Added folder: ${res.new_files} new file(s) found`, 'success')
-      setNewPath('')
-      loadFolders()
-      loadStatus()
-    } catch (e) {
-      addToast(e.message, 'error')
-    } finally {
-      setAdding(false)
-    }
-  }
-
-  async function removeFolder(id, path) {
-    try {
-      await del(`/folders/${id}`)
-      addToast(`Removed: ${path}`, 'info')
-      loadFolders()
-      loadStatus()
-    } catch (e) {
-      addToast(e.message, 'error')
-    }
-  }
-
-  async function triggerIndex() {
-    setIndexing(true)
-    try {
-      const res = await post('/index')
-      addToast(res.message, 'success')
-      loadStatus()
-    } catch (e) {
-      addToast(e.message, 'error')
-    } finally {
-      setIndexing(false)
-    }
-  }
-
-  async function pauseWatcher() {
-    try {
-      await post('/index/pause')
-      addToast('File monitoring paused', 'info')
-      loadStatus()
-    } catch (e) { addToast(e.message, 'error') }
-  }
-
-  async function resumeWatcher() {
-    try {
-      await post('/index/resume')
-      addToast('File monitoring resumed', 'success')
-      loadStatus()
-    } catch (e) { addToast(e.message, 'error') }
-  }
+  // Defrag-style map: one cell per file (capped at 600)
+  const cells = st ? [
+    ...Array(Math.min(st.indexed_files, 600)).fill(''),
+    ...Array(Math.min(st.pending_files, 600)).fill('p'),
+    ...Array(Math.min(st.failed_files, 600)).fill('f'),
+  ].slice(0, 600) : []
 
   return (
-    <div>
-      <h2 style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: '1.5rem', letterSpacing: '-0.02em' }}>
-        Settings
-      </h2>
-
-      <div className="settings-grid">
-        {/* ── Folder Manager ── */}
-        <div className="settings-card">
-          <h3>📁 Indexed Folders</h3>
-
-          <div className="folder-input-row">
-            <input
-              className="text-input"
-              placeholder="Paste full folder path…"
-              value={newPath}
-              onChange={e => setNewPath(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addFolder()}
-              id="folder-path-input"
-            />
-            <button
-              className="btn btn-primary"
-              onClick={addFolder}
-              disabled={adding || !newPath.trim()}
-              id="add-folder-btn"
-            >
-              {adding ? '…' : '+ Add'}
-            </button>
-          </div>
-
-          <div className="folder-list">
-            {folders.length === 0 && (
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', textAlign: 'center', padding: '1rem' }}>
-                No folders added yet
-              </p>
-            )}
-            {folders.map(f => (
-              <div className="folder-item" key={f.folder_id}>
-                <span style={{ fontSize: '1rem' }}>📂</span>
-                <span className="folder-item-path" title={f.path}>{f.path}</span>
-                <button
-                  className="folder-item-delete"
-                  onClick={() => removeFolder(f.folder_id, f.path)}
-                  title="Remove folder"
-                >✕</button>
-              </div>
-            ))}
-          </div>
+    <div className="body">
+      <fieldset>
+        <legend>Watched folders</legend>
+        <div className="row">
+          <input value={path} onChange={e => setPath(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="Full folder path, e.g. C:\Users\me\Documents" />
+          <button className="btn" onClick={add} disabled={busy || !path.trim()}>Add</button>
         </div>
-
-        {/* ── Status + Controls ── */}
-        <div>
-          <div className="settings-card" style={{ marginBottom: '1rem' }}>
-            <h3>📊 Index Status</h3>
-
-            {status ? (
-              <>
-                <div className="stat-grid">
-                  <div className="stat-item">
-                    <div className="stat-value">{status.total_files}</div>
-                    <div className="stat-label">Total Files</div>
-                  </div>
-                  <div className="stat-item">
-                    <div className="stat-value">{status.indexed_files}</div>
-                    <div className="stat-label">Indexed</div>
-                  </div>
-                  <div className="stat-item">
-                    <div className="stat-value">{status.pending_files}</div>
-                    <div className="stat-label">Pending</div>
-                  </div>
-                  <div className="stat-item">
-                    <div className="stat-value">{status.watched_folders}</div>
-                    <div className="stat-label">Watched Folders</div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={triggerIndex}
-                    disabled={indexing}
-                    id="index-now-btn"
-                  >
-                    {indexing ? '⏳ Indexing…' : '⚡ Index Now'}
-                  </button>
-
-                  {status.watcher_running ? (
-                    <button className="btn btn-danger" onClick={pauseWatcher} id="pause-btn">
-                      ⏸ Pause Monitoring
-                    </button>
-                  ) : (
-                    <button className="btn btn-primary" onClick={resumeWatcher} id="resume-btn">
-                      ▶ Resume Monitoring
-                    </button>
-                  )}
-                </div>
-
-                {status.failed_files > 0 && (
-                  <div className="error-box" style={{ marginTop: '0.75rem' }}>
-                    ⚠ {status.failed_files} file(s) failed to index. Check file permissions or format.
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="spinner" />
-            )}
-          </div>
-
-          {/* ── Privacy Banner ── */}
-          <div className="settings-card">
-            <h3>🔒 Privacy</h3>
-            <div className="privacy-banner">
-              <span className="privacy-icon">🖥️</span>
-              <div>
-                <strong style={{ color: 'var(--success)', display: 'block', marginBottom: '0.25rem' }}>100% Local Processing</strong>
-                Your files are read, chunked, and embedded on this device.
-                No document content is sent to any external service.
-                The embedding model (all-MiniLM-L6-v2) runs entirely locally via PyTorch.
-                Ollama LLM queries (RAG, coming next) also run on-device.
-              </div>
+        <div className="sunk" style={{ marginTop: 8, maxHeight: 130, overflow: 'auto' }}>
+          {folders.length === 0 && <div className="ev">No folders yet.</div>}
+          {folders.map(f => (
+            <div className="ev row" key={f.folder_id}>
+              <Px n="folder" s={1} /><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f.path}>{f.path}</span>
+              <button className="btn" style={{ minWidth: 60 }} onClick={() => act(() => del(`/folders/${f.folder_id}`), 'Folder removed')}>Remove</button>
             </div>
-          </div>
+          ))}
         </div>
-      </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Index map</legend>
+        {st ? <>
+          <div className="sunk grid">{cells.map((c, i) => <i key={i} className={c} />)}</div>
+          <p style={{ margin: '6px 0' }}>
+            <i className="dot" style={{ background: '#000080' }} /> indexed {st.indexed_files} &nbsp;
+            <i className="dot" style={{ background: '#f2d45c' }} /> pending {st.pending_files} &nbsp;
+            <i className="dot" style={{ background: '#d00' }} /> failed {st.failed_files} &nbsp; of {st.total_files}
+          </p>
+          <div className="row">
+            <button className="btn" onClick={indexNow}>Index Now</button>
+            {st.watcher_running
+              ? <button className="btn" onClick={() => act(() => post('/index/pause'))}>Pause</button>
+              : <button className="btn" onClick={() => act(() => post('/index/resume'))}>Resume</button>}
+          </div>
+        </> : <div className="err">Backend not reachable on localhost:8000.</div>}
+      </fieldset>
+
+      <fieldset>
+        <legend>Privacy</legend>
+        Files are read, chunked and embedded on this machine. Questions are answered by a local Ollama model.
+        A cloud model is used only if you set MEMORIA_ALLOW_CLOUD=1, and the status bar then says so.
+      </fieldset>
     </div>
   )
 }

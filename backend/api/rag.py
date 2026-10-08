@@ -1,16 +1,17 @@
 """
-RAG (Retrieval-Augmented Generation) endpoint.
+RAG (Retrieval-Augmented Generation) endpoint powered by Google Gemini API.
 
 POST /rag
-  - Retrieves the top-k semantically relevant chunks from the FAISS index
-  - Builds a context string and sends it to Gemini API (if GEMINI_API_KEY is set)
-    or a local Ollama instance as a fallback.
-  - Returns the LLM answer along with the source documents used
+  - Retrieves top-k semantically relevant chunks from FAISS
+  - Builds grounded context string from retrieved snippets
+  - Queries Google Gemini 1.5 Flash
+  - Returns model answer with document citations
 """
 
-import json
 import logging
 import os
+from pathlib import Path
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter
@@ -22,96 +23,106 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["rag"])
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-PREFERRED_MODELS = ["llama3.2", "mistral", "llama3.2:1b", "qwen2.5:0.5b"]
-OLLAMA_TIMEOUT = 120  # seconds — LLM inference can be slow on CPU
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+def _find_gemini_key(user_key: Optional[str] = None) -> Optional[str]:
+    """
+    Dynamically find Gemini API key from:
+    1. Direct request body
+    2. OS Environment variable GEMINI_API_KEY
+    3. backend/.env, project root .env, or frontend/.env
+    """
+    if user_key and user_key.strip():
+        return user_key.strip()
+
+    env_key = os.environ.get("GEMINI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    candidate_paths = [
+        Path(__file__).resolve().parent.parent / ".env",
+        Path(__file__).resolve().parent.parent.parent / ".env",
+        Path(__file__).resolve().parent.parent.parent / "frontend" / ".env",
+    ]
+    for cp in candidate_paths:
+        if cp.exists():
+            try:
+                for line in cp.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if k in ("GEMINI_API_KEY", "VITE_GEMINI_API_KEY") and v:
+                            return v
+            except Exception:
+                pass
+    return None
 
 
 def _build_context(results) -> str:
-    """
-    Concatenate retrieved chunks into a numbered context block.
-    Each entry includes the filename so the model can cite sources.
-    """
+    """Concatenate retrieved chunks into a numbered context block."""
     parts = []
     for i, r in enumerate(results, start=1):
-        parts.append(f"[{i}] {r.filename}\n{r.top_chunk_text}")
+        parts.append(f"[{i}] {r.filename} (Page {r.top_page})\n{r.top_chunk_text}")
     return "\n\n".join(parts)
 
 
-def _call_gemini(prompt: str) -> str:
+def _call_gemini(prompt: str, api_key: str) -> str:
     """
-    Call Google's Gemini API using the new google-genai SDK.
-    Supports both AQ. auth keys and AIzaSy API keys from Google AI Studio.
+    Query Google Gemini API with fallback from google.genai to direct REST endpoint.
     """
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY is not set")
+    api_key = api_key.strip()
 
+    # 1. Try google.genai SDK
     try:
         from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY.strip())
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt,
         )
-        return response.text.strip()
-    except ImportError:
-        raise RuntimeError(
-            "google-genai not installed. Run: pip install google-genai"
-        )
+        if response.text and response.text.strip():
+            return response.text.strip()
+    except Exception as exc:
+        logger.warning("[rag] google.genai client exception (%s), falling back to REST...", exc)
 
-
-def _call_ollama(model: str, prompt: str) -> str:
-    """
-    Send a synchronous, non-streaming request to Ollama.
-    Returns the response text or raises an exception.
-    """
+    # 2. Direct Google Generative Language REST API
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1024,
+        },
     }
-    with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
-        response = client.post(OLLAMA_URL, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("response", "").strip()
+    with httpx.Client(timeout=45.0) as client:
+        res = client.post(url, json=payload)
+        if res.status_code != 200:
+            err_msg = res.text
+            try:
+                err_data = res.json()
+                if "error" in err_data and "message" in err_data["error"]:
+                    err_msg = err_data["error"]["message"]
+            except Exception:
+                pass
+            raise RuntimeError(f"Gemini API ({res.status_code}): {err_msg}")
 
-
-def _try_ollama_models(prompt: str) -> tuple[str, str]:
-    """
-    Try each model in PREFERRED_MODELS in order.
-    Returns (answer, model_name) for the first model that succeeds.
-    Raises the last exception if all fail.
-    """
-    last_exc: Exception | None = None
-    for model in PREFERRED_MODELS:
-        try:
-            answer = _call_ollama(model, prompt)
-            return answer, model
-        except httpx.ConnectError as e:
-            # Ollama isn't running at all — no point trying other models
-            raise e
-        except httpx.HTTPStatusError as e:
-            # 404 = model not found, try the next one
-            if e.response.status_code == 404:
-                logger.info("[rag] Model '%s' not found, trying next", model)
-                last_exc = e
-                continue
-            raise e
-        except Exception as e:
-            last_exc = e
-            continue
-    raise last_exc  # type: ignore[misc]
+        data = res.json()
+        candidates = data.get("candidates", [])
+        if candidates and "content" in candidates[0]:
+            parts = candidates[0]["content"].get("parts", [])
+            if parts and "text" in parts[0]:
+                return parts[0]["text"].strip()
+        raise RuntimeError("Gemini returned an empty response.")
 
 
 @router.post("/rag", response_model=RAGResponse)
 def rag_query(body: RAGRequest):
     """
-    Answer a natural language question using local document context.
+    Answer a natural language question using document chunks + Gemini API.
     """
-    # --- 1. Retrieve relevant chunks ---
     results = search(query=body.query, top_k=body.top_k)
 
     sources = [
@@ -124,54 +135,47 @@ def rag_query(body: RAGRequest):
         for r in results
     ]
 
-    # --- 2. Build context ---
     if not results:
         return RAGResponse(
             query=body.query,
-            answer="No relevant documents found in the index. "
-                   "Make sure files have been indexed before querying.",
+            answer="No relevant documents found in the index. Make sure your folders are added and indexed in Setup before asking questions.",
             sources=[],
+            model="none",
+        )
+
+    api_key = _find_gemini_key(body.api_key)
+    if not api_key:
+        return RAGResponse(
+            query=body.query,
+            answer="Gemini API Key is not configured. Please paste your Gemini API key in the 'Setup' tab under Gemini AI, or set GEMINI_API_KEY in .env.",
+            sources=sources,
             model="none",
         )
 
     context = _build_context(results)
     prompt = (
-        "You are a helpful assistant. Answer the question below using ONLY "
-        "the provided document excerpts. If the answer is not in the excerpts, "
-        "say so clearly.\n\n"
-        f"Documents:\n{context}\n\n"
+        "You are an intelligent document assistant in Memoria.\n"
+        "Answer the question clearly and factually using ONLY the provided document excerpts.\n"
+        "Cite your sources using [1], [2], etc. referencing the numbered excerpts.\n"
+        "If the excerpts do not contain enough information to answer, state that clearly.\n\n"
+        f"Document Excerpts:\n{context}\n\n"
         f"Question: {body.query}\n\n"
         "Answer:"
     )
 
-    # --- 3. Call LLM (Gemini if key exists, else Ollama) ---
     try:
-        if GEMINI_API_KEY:
-            answer = _call_gemini(prompt)
-            model_used = "Gemini 1.5 Flash (API)"
-        else:
-            answer, model_used = _try_ollama_models(prompt)
-    except httpx.ConnectError:
-        logger.warning("[rag] Ollama not reachable at %s", OLLAMA_URL)
+        answer = _call_gemini(prompt, api_key)
         return RAGResponse(
             query=body.query,
-            answer="Ollama not running and no GEMINI_API_KEY provided. Start Ollama or provide a Gemini API key.",
+            answer=answer,
             sources=sources,
-            model="none",
+            model="Gemini 1.5 Flash (Google API)",
         )
     except Exception as exc:
-        logger.error("[rag] LLM error: %s", exc)
+        logger.error("[rag] Gemini error: %s", exc)
         return RAGResponse(
             query=body.query,
-            answer=f"LLM error: {exc}",
+            answer=f"Gemini API Error: {exc}",
             sources=sources,
             model="none",
         )
-
-    # --- 4. Return answer + sources ---
-    return RAGResponse(
-        query=body.query,
-        answer=answer,
-        sources=sources,
-        model=model_used,
-    )

@@ -1,211 +1,107 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useApi } from './useApi'
+import Px from './Px'
 
-export default function SettingsPage({ addToast, user }) {
+export default function SettingsPage({ addToast }) {
   const { get, post, del } = useApi()
   const [folders, setFolders] = useState([])
-  const [status, setStatus] = useState(null)
-  const [newPath, setNewPath] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [indexing, setIndexing] = useState(false)
-  const [userName, setUserName] = useState(() => localStorage.getItem('memoria_name') || '')
+  const [st, setSt] = useState(null)
+  const [path, setPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('memoria_gemini_key') || '')
 
-  const loadFolders = useCallback(async () => {
+  const load = useCallback(async () => {
     try { setFolders(await get('/folders')) } catch {}
+    try { setSt(await get('/index/status')) } catch { setSt(null) }
   }, [get])
+  useEffect(() => { load(); const id = setInterval(load, 4000); return () => clearInterval(id) }, [load])
 
-  const loadStatus = useCallback(async () => {
-    try { setStatus(await get('/index/status')) } catch {}
-  }, [get])
+  const act = async (fn, ok) => { try { await fn(); ok && addToast(ok); load() } catch (e) { addToast(e.message) } }
+  const add = async () => { if (!path.trim()) return; setBusy(true); await act(async () => { await post('/folders', { path: path.trim() }); setPath('') }, 'Folder added'); setBusy(false) }
+  const indexNow = () => act(async () => { await post('/index'); }, 'Indexing started')
 
-  useEffect(() => {
-    loadFolders()
-    loadStatus()
-    const id = setInterval(() => { loadFolders(); loadStatus() }, 4000)
-    return () => clearInterval(id)
-  }, [loadFolders, loadStatus])
-
-  async function addFolder() {
-    if (!newPath.trim()) return
-    setAdding(true)
-    try {
-      await post('/folders', { path: newPath.trim() })
-      setNewPath('')
-      await loadFolders()
-      addToast('Folder added', 'success')
-    } catch (e) { addToast(e.message, 'error') }
-    finally { setAdding(false) }
+  const saveGeminiKey = () => {
+    const k = geminiKey.trim()
+    if (k) {
+      localStorage.setItem('memoria_gemini_key', k)
+      addToast('Gemini API Key saved!')
+    } else {
+      localStorage.removeItem('memoria_gemini_key')
+      addToast('Gemini API Key cleared.')
+    }
   }
 
-  async function removeFolder(id, path) {
-    try {
-      await del(`/folders/${id}`)
-      await loadFolders()
-      addToast(`Removed: ${path}`, 'info')
-    } catch (e) { addToast(e.message, 'error') }
-  }
-
-  async function triggerIndex() {
-    setIndexing(true)
-    try {
-      await post('/index/trigger')
-      addToast('Indexing started', 'info')
-      setTimeout(loadStatus, 1500)
-    } catch (e) { addToast(e.message, 'error') }
-    finally { setIndexing(false) }
-  }
-
-  async function pauseWatcher() {
-    try { await post('/index/pause'); await loadStatus() } catch (e) { addToast(e.message, 'error') }
-  }
-  async function resumeWatcher() {
-    try { await post('/index/resume'); await loadStatus() } catch (e) { addToast(e.message, 'error') }
-  }
+  // Defrag-style map: one cell per file (capped at 600)
+  const cells = st ? [
+    ...Array(Math.min(st.indexed_files, 600)).fill(''),
+    ...Array(Math.min(st.pending_files, 600)).fill('p'),
+    ...Array(Math.min(st.failed_files, 600)).fill('f'),
+  ].slice(0, 600) : []
 
   return (
-    <div className="settings-shell">
-
-      {/* Left — content area */}
-      <div className="settings-content">
-
-        {/* Natural page heading */}
-        <div className="settings-page-title">
-          <p className="settings-eyebrow">Configuration</p>
-          <h2 className="settings-title">Settings</h2>
+    <div className="body">
+      <fieldset>
+        <legend>Watched folders</legend>
+        <div className="row">
+          <input value={path} onChange={e => setPath(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="Full folder path, e.g. C:\Users\me\Documents" />
+          <button className="btn" onClick={add} disabled={busy || !path.trim()}>Add</button>
         </div>
-
-        <div className="settings-grid">
-          {/* Account Info */}
-          <div className="settings-card">
-            <h3 className="settings-card-title">Account</h3>
-            {userName && (
-              <p style={{ color: 'var(--text-1)', fontSize: '0.92rem', marginBottom: '0.3rem', fontFamily: "'Fraunces', serif" }}>
-                Name: <strong style={{ color: '#fff', fontWeight: 400 }}>{userName}</strong>
-              </p>
-            )}
-            <p style={{ color: 'var(--text-2)', fontSize: '0.85rem' }}>
-              Logged in as: <strong style={{ color: '#fff' }}>{user}</strong>
-            </p>
-          </div>
-
-          {/* Folder Manager */}
-          <div className="settings-card">
-            <h3 className="settings-card-title">Indexed Folders</h3>
-
-            <div className="folder-input-row">
-              <input
-                className="text-input"
-                placeholder="Paste full folder path…"
-                value={newPath}
-                onChange={e => setNewPath(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addFolder()}
-                id="folder-path-input"
-              />
-              <button
-                className="btn btn-primary"
-                onClick={addFolder}
-                disabled={adding || !newPath.trim()}
-                id="add-folder-btn"
-              >
-                {adding ? '…' : '+ Add'}
-              </button>
+        <div className="sunk" style={{ marginTop: 8, maxHeight: 130, overflow: 'auto' }}>
+          {folders.length === 0 && <div className="ev">No folders yet.</div>}
+          {folders.map(f => (
+            <div className="ev row" key={f.folder_id}>
+              <Px n="folder" s={1} /><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f.path}>{f.path}</span>
+              <button className="btn" style={{ minWidth: 60 }} onClick={() => act(() => del(`/folders/${f.folder_id}`), 'Folder removed')}>Remove</button>
             </div>
-
-            <div className="folder-list">
-              {folders.length === 0 && (
-                <p className="folder-empty">No folders added yet</p>
-              )}
-              {folders.map(f => (
-                <div className="folder-item" key={f.folder_id}>
-                  <span className="folder-item-icon" aria-hidden="true" />
-                  <span className="folder-item-path" title={f.path}>{f.path}</span>
-                  <button
-                    className="folder-item-delete"
-                    onClick={() => removeFolder(f.folder_id, f.path)}
-                    title="Remove folder"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Status + Controls */}
-          <div>
-            <div className="settings-card" style={{ marginBottom: '1rem' }}>
-              <h3 className="settings-card-title">Index Status</h3>
-
-              {status ? (
-                <>
-                  <div className="stat-grid">
-                    <div className="stat-item">
-                      <div className="stat-value">{status.total_files}</div>
-                      <div className="stat-label">Total files</div>
-                    </div>
-                    <div className="stat-item">
-                      <div className="stat-value">{status.indexed_files}</div>
-                      <div className="stat-label">Indexed</div>
-                    </div>
-                    <div className="stat-item">
-                      <div className="stat-value">{status.pending_files}</div>
-                      <div className="stat-label">Pending</div>
-                    </div>
-                    <div className="stat-item">
-                      <div className="stat-value">{status.watched_folders}</div>
-                      <div className="stat-label">Watched folders</div>
-                    </div>
-                  </div>
-
-                  {status.pending_files > 0 && (
-                    <div className="indexing-hint">
-                      <strong>{status.pending_files} file{status.pending_files > 1 ? 's' : ''}</strong> being embedded in the background.
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
-                    <button className="btn btn-ghost" onClick={triggerIndex} disabled={indexing} id="index-now-btn">
-                      {indexing ? 'Indexing…' : 'Index Now'}
-                    </button>
-                    {status.watcher_running ? (
-                      <button className="btn btn-danger" onClick={pauseWatcher} id="pause-btn">Pause Monitoring</button>
-                    ) : (
-                      <button className="btn btn-primary" onClick={resumeWatcher} id="resume-btn">Resume Monitoring</button>
-                    )}
-                  </div>
-
-                  {status.failed_files > 0 && (
-                    <div className="error-box" style={{ marginTop: '0.75rem' }}>
-                      {status.failed_files} file(s) failed to index. Check permissions or file format.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="spinner" />
-              )}
-            </div>
-
-            {/* Privacy */}
-            <div className="settings-card">
-              <h3 className="settings-card-title">Privacy</h3>
-              <div className="privacy-banner">
-                <strong className="privacy-title">100% Local Processing</strong>
-                <p className="privacy-body">
-                  Your files are read, chunked, and embedded on this device.
-                  Nothing is sent to any external service.
-                  The embedding model runs entirely offline via ONNX Runtime.
-                </p>
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
-      </div>
+      </fieldset>
 
-      {/* Right — space image panel (clean, no text overlay) */}
-      <div className="settings-image-panel" aria-hidden="true">
-        <div className="settings-image-inner" />
-      </div>
+      <fieldset>
+        <legend>Gemini AI (for Ask Files / RAG)</legend>
+        <p style={{ margin: '0 0 8px', fontSize: '11px', opacity: 0.85 }}>
+          Power your document Q&amp;A using Google Gemini 1.5 Flash. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', textDecoration: 'underline' }}>Google AI Studio</a>.
+        </p>
+        <div className="row">
+          <input
+            type="password"
+            value={geminiKey}
+            onChange={e => setGeminiKey(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && saveGeminiKey()}
+            placeholder="AIzaSy... (Gemini API Key)"
+          />
+          <button className="btn" onClick={saveGeminiKey}>Save Key</button>
+        </div>
+        {geminiKey && (
+          <small style={{ display: 'block', marginTop: 4, color: '#167a3a', fontSize: '10px' }}>
+            ✓ Gemini API Key active on this browser
+          </small>
+        )}
+      </fieldset>
 
+      <fieldset>
+        <legend>Index map</legend>
+        {st ? <>
+          <div className="sunk grid">{cells.map((c, i) => <i key={i} className={c} />)}</div>
+          <p style={{ margin: '6px 0' }}>
+            <i className="dot" style={{ background: '#000080' }} /> indexed {st.indexed_files} &nbsp;
+            <i className="dot" style={{ background: '#f2d45c' }} /> pending {st.pending_files} &nbsp;
+            <i className="dot" style={{ background: '#d00' }} /> failed {st.failed_files} &nbsp; of {st.total_files}
+          </p>
+          <div className="row">
+            <button className="btn" onClick={indexNow}>Index Now</button>
+            {st.watcher_running
+              ? <button className="btn" onClick={() => act(() => post('/index/pause'))}>Pause</button>
+              : <button className="btn" onClick={() => act(() => post('/index/resume'))}>Resume</button>}
+          </div>
+        </> : <div className="err">Backend not reachable on localhost:8000.</div>}
+      </fieldset>
+
+      <fieldset>
+        <legend>Privacy &amp; Architecture</legend>
+        Your files are parsed, chunked, and embedded entirely locally on this computer using ONNX &amp; FAISS.
+        When using &quot;Ask your files&quot;, only the top retrieved excerpts are sent to Google Gemini to formulate the answer.
+      </fieldset>
     </div>
   )
 }
