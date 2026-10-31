@@ -33,6 +33,12 @@ Design decisions documented here (important to understand before modifying):
    sufficient for the current load profile (one desktop user).
 """
 
+import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import logging
 import threading
 from pathlib import Path
@@ -67,13 +73,21 @@ class FaissIndex:
         index_path = Path(FAISS_INDEX_PATH)
         if index_path.exists():
             try:
-                self._index = faiss.read_index(str(index_path))
+                self._index = faiss.read_index(str(index_path), faiss.IO_FLAG_MMAP)
                 logger.info(
-                    "[faiss] Loaded index from disk: %d vectors", self._index.ntotal
+                    "[faiss] Loaded index from disk with MMAP: %d vectors", self._index.ntotal
                 )
                 return
             except Exception as exc:
-                logger.warning("[faiss] Failed to load index from disk: %s — creating new", exc)
+                logger.warning("[faiss] Failed to load index with MMAP: %s — trying standard read", exc)
+                try:
+                    self._index = faiss.read_index(str(index_path))
+                    logger.info(
+                        "[faiss] Loaded index from disk: %d vectors", self._index.ntotal
+                    )
+                    return
+                except Exception as exc2:
+                    logger.error("[faiss] Failed to load index from disk: %s", exc2)
 
         # Create fresh index: IndexIDMap wraps a flat inner-product index
         flat = faiss.IndexFlatIP(self._dim)

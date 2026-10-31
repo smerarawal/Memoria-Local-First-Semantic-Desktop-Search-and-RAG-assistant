@@ -32,7 +32,9 @@ from db.database import db_session
 from db.repositories import ChunkRepository, FileRepository
 from processors.chunker import chunk_pages
 from processors.docx_processor import extract_docx
+from processors.image_processor import extract_image
 from processors.pdf_processor import extract_pdf
+from processors.pptx_processor import extract_pptx
 from processors.txt_processor import extract_text
 from services.embedding_service import embedding_service
 from vector.faiss_index import faiss_index
@@ -47,12 +49,17 @@ _WORKER_POLL_INTERVAL = 10
 
 def _extract(path: Path, extension: str):
     """Route to the correct extractor based on extension."""
-    if extension == ".pdf":
+    ext = extension.lower()
+    if ext == ".pdf":
         return extract_pdf(path)
-    elif extension == ".docx":
+    elif ext == ".docx":
         return extract_docx(path)
-    elif extension in (".txt", ".md"):
+    elif ext == ".pptx":
+        return extract_pptx(path)
+    elif ext in (".txt", ".md"):
         return extract_text(path)
+    elif ext in (".png", ".jpg", ".jpeg", ".webp"):
+        return extract_image(path)
     return None
 
 

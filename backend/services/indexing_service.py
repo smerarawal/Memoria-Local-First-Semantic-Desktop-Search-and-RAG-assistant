@@ -58,9 +58,9 @@ def scan_folder(folder_id: int, folder_path: str, file_repo: FileRepository) -> 
     root = Path(folder_path)
 
     for dirpath, dirnames, filenames in os.walk(root):
-        # Skip hidden directories (.git, .cache, __pycache__, etc.) in-place
-        # so os.walk doesn't descend into them at all — pruning beats filtering.
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
+        # Skip hidden directories (.git, .cache, __pycache__, etc.) and build/temp folders in-place
+        ignore_dirs = {".git", ".svn", "__pycache__", "node_modules", "venv", ".venv", "env", "dist", "build", ".next", ".cache", "tmp", "temp"}
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in ignore_dirs]
 
         for name in filenames:
             if name.startswith("."):

@@ -26,10 +26,9 @@ import hashlib
 from pathlib import Path
 
 # Extensions Memoria can process. Centralised here so the scanner,
-# watcher, and future processors all share one source of truth.
-# OCR (.png / .jpg) comes later (Iteration 7+ per project plan).
+# watcher, and processors all share one source of truth.
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
-    {".pdf", ".docx", ".txt", ".md"}
+    {".pdf", ".docx", ".pptx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"}
 )
 
 

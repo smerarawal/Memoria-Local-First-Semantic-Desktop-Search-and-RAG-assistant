@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from 'react'
 import { useApi } from './useApi'
 import Px from './Px'
 
-export default function SettingsPage({ addToast }) {
+export default function SettingsPage({ addToast, onLogout, user }) {
   const { get, post, del } = useApi()
   const [folders, setFolders] = useState([])
   const [st, setSt] = useState(null)
   const [path, setPath] = useState('')
   const [busy, setBusy] = useState(false)
   const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('memoria_gemini_key') || '')
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('memoria_groq_key') || '')
 
   const load = useCallback(async () => {
     try { setFolders(await get('/folders')) } catch {}
@@ -31,6 +32,17 @@ export default function SettingsPage({ addToast }) {
     }
   }
 
+  const saveGroqKey = () => {
+    const k = groqKey.trim()
+    if (k) {
+      localStorage.setItem('memoria_groq_key', k)
+      addToast('Groq API Key saved!')
+    } else {
+      localStorage.removeItem('memoria_groq_key')
+      addToast('Groq API Key cleared.')
+    }
+  }
+
   // Defrag-style map: one cell per file (capped at 600)
   const cells = st ? [
     ...Array(Math.min(st.indexed_files, 600)).fill(''),
@@ -49,18 +61,60 @@ export default function SettingsPage({ addToast }) {
         <div className="sunk" style={{ marginTop: 8, maxHeight: 130, overflow: 'auto' }}>
           {folders.length === 0 && <div className="ev">No folders yet.</div>}
           {folders.map(f => (
-            <div className="ev row" key={f.folder_id}>
-              <Px n="folder" s={1} /><span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f.path}>{f.path}</span>
-              <button className="btn" style={{ minWidth: 60 }} onClick={() => act(() => del(`/folders/${f.folder_id}`), 'Folder removed')}>Remove</button>
+            <div className="ev row" key={f.folder_id} style={{ alignItems: 'center', gap: 6 }}>
+              <Px n="folder" s={1} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} title={f.path}>
+                {f.path}
+              </span>
+              <span style={{ fontSize: '10px', color: f.enabled ? '#167a3a' : '#888', fontWeight: 600 }}>
+                {f.enabled ? '[Active]' : '[Paused]'}
+              </span>
+              <button
+                className="btn"
+                style={{ minWidth: 55, padding: '2px 8px', fontSize: '11px' }}
+                onClick={() => act(() => post(`/folders/${f.folder_id}/toggle`), f.enabled ? 'Folder indexing paused' : 'Folder indexing resumed')}
+                title={f.enabled ? "Stop watching this folder for new files (keeps all already indexed files)" : "Resume watching this folder"}
+              >
+                {f.enabled ? 'Pause' : 'Resume'}
+              </button>
+              <button
+                className="btn"
+                style={{ minWidth: 55, padding: '2px 8px', fontSize: '11px', background: 'var(--coral)' }}
+                onClick={() => act(() => del(`/folders/${f.folder_id}`), 'Folder removed')}
+              >
+                Remove
+              </button>
             </div>
           ))}
         </div>
       </fieldset>
 
       <fieldset>
-        <legend>Gemini AI (for Ask Files / RAG)</legend>
+        <legend>Groq AI (Ultra-low latency RAG)</legend>
         <p style={{ margin: '0 0 8px', fontSize: '11px', opacity: 0.85 }}>
-          Power your document Q&amp;A using Google Gemini 1.5 Flash. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', textDecoration: 'underline' }}>Google AI Studio</a>.
+          Recommended for instant document answers (~0.3s latency) using Llama 3.3 70B on Groq LPUs. Get a free key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', textDecoration: 'underline' }}>console.groq.com</a>.
+        </p>
+        <div className="row">
+          <input
+            type="password"
+            value={groqKey}
+            onChange={e => setGroqKey(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && saveGroqKey()}
+            placeholder="gsk_... (Groq API Key)"
+          />
+          <button className="btn" onClick={saveGroqKey}>Save Key</button>
+        </div>
+        {groqKey && (
+          <small style={{ display: 'block', marginTop: 4, color: '#167a3a', fontSize: '10px' }}>
+            [Active] Groq API Key configured on this browser
+          </small>
+        )}
+      </fieldset>
+
+      <fieldset>
+        <legend>Gemini AI (for Ask Files / RAG &amp; Vision OCR)</legend>
+        <p style={{ margin: '0 0 8px', fontSize: '11px', opacity: 0.85 }}>
+          Power document Q&amp;A and image OCR using Google Gemini. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', textDecoration: 'underline' }}>Google AI Studio</a>.
         </p>
         <div className="row">
           <input
@@ -74,7 +128,7 @@ export default function SettingsPage({ addToast }) {
         </div>
         {geminiKey && (
           <small style={{ display: 'block', marginTop: 4, color: '#167a3a', fontSize: '10px' }}>
-            ✓ Gemini API Key active on this browser
+            [Active] Gemini API Key configured on this browser
           </small>
         )}
       </fieldset>
@@ -100,7 +154,23 @@ export default function SettingsPage({ addToast }) {
       <fieldset>
         <legend>Privacy &amp; Architecture</legend>
         Your files are parsed, chunked, and embedded entirely locally on this computer using ONNX &amp; FAISS.
-        When using &quot;Ask your files&quot;, only the top retrieved excerpts are sent to Google Gemini to formulate the answer.
+        When using &quot;Ask your files&quot;, only the top retrieved excerpts are sent to your chosen LLM (Groq or Gemini) to formulate the answer.
+      </fieldset>
+
+      <fieldset>
+        <legend>Account</legend>
+        <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '12px' }}>Signed in as <b>{user || 'User'}</b></span>
+          {onLogout && (
+            <button
+              className="btn"
+              style={{ background: 'var(--coral)', minWidth: 80, padding: '4px 12px' }}
+              onClick={onLogout}
+            >
+              Sign Out
+            </button>
+          )}
+        </div>
       </fieldset>
     </div>
   )

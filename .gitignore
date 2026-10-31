@@ -11,8 +11,8 @@ env/
 *.db
 *.sqlite3
 *.faiss
-data/*.db
-data/*.faiss
+*.bak
+data/
 backend/*.db
 
 # Node / Frontend

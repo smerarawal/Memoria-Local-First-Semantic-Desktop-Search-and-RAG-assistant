@@ -101,3 +101,48 @@ def resume_indexing():
         "watcher_running": snap["running"],
         "watched_folders": snap["watched_folders"],
     }
+
+
+@router.post("", status_code=200)
+@router.post("/rebuild", status_code=200)
+@router.post("/scan", status_code=200)
+def trigger_indexing(conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Trigger manual scan and indexing for all watched folders.
+    1. Rescans all watched folders for newly added or modified files.
+    2. Processes all pending files through extraction, chunking, embedding, and FAISS indexing.
+    """
+    from pathlib import Path
+    from db.repositories import FileRepository, FolderRepository
+    from services.indexing_service import scan_folder
+    from services.document_service import process_pending_files
+
+    folder_repo = FolderRepository(conn)
+    file_repo = FileRepository(conn)
+    watched_folders = [f for f in folder_repo.list_all() if f["enabled"]]
+
+    total_new = 0
+    total_updated = 0
+    for f in watched_folders:
+        folder_path = Path(f["path"])
+        if folder_path.is_dir():
+            summary = scan_folder(
+                folder_id=f["folder_id"],
+                folder_path=f["path"],
+                file_repo=file_repo,
+            )
+            total_new += summary.get("new_files", 0)
+            total_updated += summary.get("updated_files", 0)
+
+    # Trigger background processing for all pending files without blocking HTTP response
+    import threading
+    threading.Thread(target=process_pending_files, daemon=True, name="manual-index-worker").start()
+
+    counts = _file_counts(conn)
+    return {
+        "message": "Indexing started.",
+        "scanned_folders": len(watched_folders),
+        "new_files": total_new,
+        "updated_files": total_updated,
+        "pending_files": counts["pending"],
+    }

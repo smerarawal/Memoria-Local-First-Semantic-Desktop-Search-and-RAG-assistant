@@ -120,7 +120,7 @@ class MemoriaEventHandler(FileSystemEventHandler):
 
         with db_session() as conn:
             file_repo = FileRepository(conn)
-            _row, status = file_repo.upsert(
+            file_row, status = file_repo.upsert(
                 folder_id=self.folder_id,
                 filename=path.name,
                 path=path_str,
@@ -130,7 +130,13 @@ class MemoriaEventHandler(FileSystemEventHandler):
                 modified_at=_iso(stat.st_mtime),
                 content_hash=content_hash,
             )
+            file_id = file_row["file_id"]
+
         logger.info("[watcher] %s → %s (%s)", status.upper(), path.name, path_str)
+
+        if status in ("new", "updated"):
+            from services.document_service import process_file
+            threading.Thread(target=process_file, args=(file_id,), daemon=True).start()
 
     def _handle_delete(self, path_str: str) -> None:
         """

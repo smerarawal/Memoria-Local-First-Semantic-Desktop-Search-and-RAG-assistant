@@ -94,7 +94,7 @@ export default function LoginPage({ onLogin }) {
           {/* Manual form — collapsed by default */}
           {!showForm ? (
             <button className="lp-show-form-btn" onClick={() => setShowForm(true)}>
-              Use username &amp; password ↓
+              Use username &amp; password
             </button>
           ) : (
             <form onSubmit={submit} noValidate>
@@ -114,7 +114,7 @@ export default function LoginPage({ onLogin }) {
               </label>
               {error && <p className="lp-error">{error}</p>}
               <button className="lp-btn" type="submit" disabled={loading}>
-                {loading ? 'One moment…' : 'Enter →'}
+                {loading ? 'One moment…' : 'Enter'}
               </button>
             </form>
           )}
@@ -122,7 +122,7 @@ export default function LoginPage({ onLogin }) {
           {error && !showForm && <p className="lp-error">{error}</p>}
 
           <p className="lp-privacy">
-            🔒 All your files stay on this machine. Memoria never uploads your documents.
+            All your files stay on this machine. Memoria never uploads your documents.
           </p>
 
         </div>

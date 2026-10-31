@@ -6,6 +6,12 @@ embeddings + FAISS) + GET /search + POST /index + POST /index/rebuild.
 main.py stays a thin composition root — lifecycle + router registration.
 """
 
+import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -41,6 +47,31 @@ async def lifespan(app_: object):
     
     watcher_service.start()
     start_background_worker()
+
+    def _startup_sync():
+        try:
+            import time
+            time.sleep(1.0)  # brief pause for DB and watcher to settle
+            from pathlib import Path
+            from db.database import db_session
+            from db.repositories import FileRepository, FolderRepository
+            from services.document_service import process_pending_files
+            from services.indexing_service import scan_folder
+
+            with db_session() as conn:
+                folder_repo = FolderRepository(conn)
+                file_repo = FileRepository(conn)
+                for f in folder_repo.list_all():
+                    if not f["enabled"]:
+                        continue
+                    p = Path(f["path"])
+                    if p.is_dir():
+                        scan_folder(f["folder_id"], f["path"], file_repo)
+            process_pending_files()
+        except Exception as e:
+            pass
+
+    threading.Thread(target=_startup_sync, daemon=True, name="startup-sync").start()
     yield
     stop_background_worker()
     watcher_service.stop()

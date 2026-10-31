@@ -123,3 +123,50 @@ def reveal_file_desktop(body: OpenFileRequest, conn: sqlite3.Connection = Depend
         return {"status": "ok", "revealed": norm_path}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not reveal file: {exc}")
+
+
+@router.get("/{file_id}/thumbnail")
+def get_thumbnail(file_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Return a 200px-wide JPEG thumbnail for image files.
+    Used by the frontend to show image previews inline in search results.
+    Returns 404 for non-image files or files not on disk.
+    """
+    from io import BytesIO
+    from fastapi.responses import Response
+
+    repo = FileRepository(conn)
+    row = repo.get(file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = (row.get("extension") or "").lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+        raise HTTPException(status_code=400, detail="Not an image file")
+
+    file_path = row["path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    try:
+        from PIL import Image
+        img = Image.open(file_path)
+        # Convert to RGB for JPEG output
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        # Resize to 200px wide, maintaining aspect ratio
+        max_width = 200
+        if img.width > max_width:
+            ratio = max_width / img.width
+            img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=75)
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Thumbnail error: {exc}")
+

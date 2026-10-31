@@ -87,6 +87,32 @@ def add_folder(
     )
 
 
+@router.post("/{folder_id}/toggle", status_code=200)
+def toggle_folder(folder_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    Toggle monitoring on/off for a folder.
+    When paused, watching stops and no new files are scanned or indexed.
+    All existing indexed files are completely preserved!
+    """
+    repo = FolderRepository(conn)
+    row = repo.get(folder_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Folder {folder_id} not found.")
+
+    new_enabled = 0 if row["enabled"] else 1
+    conn.execute("UPDATE folders SET enabled = ? WHERE folder_id = ?", (new_enabled, folder_id))
+    
+    if not new_enabled:
+        watcher_service.remove_watch(folder_id)
+        # Clear any pending un-indexed files so the worker does not process them
+        conn.execute("DELETE FROM files WHERE folder_id = ? AND status = 'pending'", (folder_id,))
+    else:
+        watcher_service.add_watch(folder_id, row["path"])
+
+    conn.commit()
+    return {"folder_id": folder_id, "enabled": bool(new_enabled)}
+
+
 @router.delete("/{folder_id}", status_code=204)
 def remove_folder(folder_id: int, conn: sqlite3.Connection = Depends(get_db)):
     """

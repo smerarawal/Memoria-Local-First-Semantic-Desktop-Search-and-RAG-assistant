@@ -59,7 +59,7 @@ class FileRepository:
 
     def get_by_path(self, path: str) -> Optional[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM files WHERE path = ?", (path,)
+            "SELECT * FROM files WHERE LOWER(path) = LOWER(?)", (path,)
         ).fetchone()
 
     def get(self, file_id: int) -> Optional[sqlite3.Row]:
@@ -76,9 +76,12 @@ class FileRepository:
         return self.conn.execute("SELECT * FROM files ORDER BY filename").fetchall()
 
     def list_by_status(self, status: str) -> list[sqlite3.Row]:
-        """Return all files with a given status. Used by the processing worker."""
+        """Return all files with a given status for enabled folders only. Used by the processing worker."""
         return self.conn.execute(
-            "SELECT * FROM files WHERE status = ? ORDER BY file_id",
+            """SELECT f.* FROM files f
+               JOIN folders fo ON f.folder_id = fo.folder_id
+               WHERE f.status = ? AND fo.enabled = 1
+               ORDER BY f.file_id DESC""",
             (status,),
         ).fetchall()
 

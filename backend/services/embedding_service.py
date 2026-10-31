@@ -20,6 +20,7 @@ search feel broken.
 
 import logging
 import numpy as np
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class EmbeddingService:
     def __init__(self) -> None:
         self._tokenizer = None
         self._session = None
+        self._embed_cache: OrderedDict = OrderedDict()  # LRU cache for embed_one()
 
     def load(self) -> None:
         """
@@ -46,9 +48,13 @@ class EmbeddingService:
             import onnxruntime as ort
             from tokenizers import Tokenizer
             
-            # Download or get from cache
-            model_path = hf_hub_download(repo_id=MODEL_REPO, filename="onnx/model.onnx")
-            tokenizer_path = hf_hub_download(repo_id=MODEL_REPO, filename="tokenizer.json")
+            # Download or get from cache — try local_files_only first to avoid network delay
+            try:
+                model_path = hf_hub_download(repo_id=MODEL_REPO, filename="onnx/model.onnx", local_files_only=True)
+                tokenizer_path = hf_hub_download(repo_id=MODEL_REPO, filename="tokenizer.json", local_files_only=True)
+            except Exception:
+                model_path = hf_hub_download(repo_id=MODEL_REPO, filename="onnx/model.onnx")
+                tokenizer_path = hf_hub_download(repo_id=MODEL_REPO, filename="tokenizer.json")
             
             # Load tokenizer
             self._tokenizer = Tokenizer.from_file(tokenizer_path)
@@ -104,13 +110,25 @@ class EmbeddingService:
 
     def embed_one(self, text: str) -> np.ndarray:
         """
-        Embed a single string.
+        Embed a single string. Caches the last 256 results to avoid
+        re-running ONNX inference for repeated queries (~14ms each).
         """
-        result = self.embed([text])
-        return result[0]
+        key = text.strip()
+        if key in self._embed_cache:
+            # Move to end (most recently used)
+            self._embed_cache.move_to_end(key)
+            logger.debug("[embedding] Cache hit for query: %.60s", key)
+            return self._embed_cache[key].copy()
+
+        result = self.embed([key])
+        vec = result[0]
+
+        self._embed_cache[key] = vec
+        if len(self._embed_cache) > 256:
+            self._embed_cache.popitem(last=False)  # Evict oldest
+
+        return vec.copy()
 
 
 # Module-level singleton
 embedding_service = EmbeddingService()
-
-

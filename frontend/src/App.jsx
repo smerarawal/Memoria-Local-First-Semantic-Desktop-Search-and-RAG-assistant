@@ -111,22 +111,20 @@ export default function App() {
             <button className={'nav' + (tab === 'find'  ? ' on' : '')} onClick={() => setTab('find')}>find</button>
             <button className={'nav' + (tab === 'setup' ? ' on' : '')} onClick={() => setTab('setup')}>setup</button>
           </nav>
-          <div className="chip">
-            <span className={'dot' + (st?.watcher_running ? '' : ' off')} />
-            {st ? `${st.indexed_files} files` : 'offline'}
-          </div>
-          {/* User info + logout */}
-          <div className="top-user">
-            <span className="top-username">{name || user}</span>
+          <div className="top-right">
+            <div className="chip">
+              <span className={'dot' + (st?.watcher_running ? '' : ' off')} />
+              {st ? `${st.indexed_files} files` : 'offline'}
+            </div>
             <button className="logout-btn" onClick={handleLogout} title="Sign out">
-              sign out ↩
+              sign out
             </button>
           </div>
         </header>
         <section className="panel">
           {tab === 'find'
             ? <SearchPage addToast={addToast} onHits={() => {}} st={st} />
-            : <SettingsPage addToast={addToast} />}
+            : <SettingsPage addToast={addToast} onLogout={handleLogout} user={name || user} />}
         </section>
       </main>
       {toasts.map(t => <div key={t.id} className="toast">{t.msg}</div>)}
